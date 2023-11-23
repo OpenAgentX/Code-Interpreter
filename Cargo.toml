@@ -20,7 +20,28 @@ directories = "5.0.1"
 regex = "1.10.2"
 derive_builder = "0.12.0"
 
-pyo3 = { version = "0.20.0", features = ["extension-module"] }
+anyhow = "1.0"
+clap = { version = "4.4.8", features = ["derive"] }
+rustyline = "12.0.0"
+termimad = "0.26"
+
+tracing = "0.1"
+# tracing-appender = "0.2"
+tracing-subscriber = { version = "0.3", features = ["local-time"] }
+
+# pyo3 = { version = "0.20.0", features = ["extension-module"] }
 
 syntect = { version = "5.1.0", default-features = false, features = ["default-fancy"]}
 # rustpython = "0.3.0"
+
+[profile.release]
+# https://github.com/johnthagen/min-sized-rust
+strip = true  # Automatically strip symbols from the binary.
+opt-level = "z"  # Optimize for size.
+lto = true
+codegen-units = 1
+panic = "abort"
+# indicatif
+# # When using alpha-release, always use exact version, e.g. `version = "=0.x.y-alpha.z"
+# # This is because we treat alpha-releases as incompatible, but semver doesn't.
+# # In particular: if we compile AICommander 0.3.0-alpha.0 we only want it to use

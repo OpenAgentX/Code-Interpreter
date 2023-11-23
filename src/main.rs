@@ -1,3 +1,15 @@
+use std::ffi::OsString;
+use std::path::PathBuf;
+
+use clap::arg;
+use clap::{Arg, Subcommand};
+use rustyline::error::ReadlineError;
+use rustyline::DefaultEditor;
+
+use termimad::MadSkin;
+use tracing::{info, debug, warn};
+// use tracing_subscriber::fmt::time;
+
 use core::time;
 use std::collections::{HashMap, HashSet};
 use std::error::Error;
@@ -49,18 +61,219 @@ pub struct ChatCompletionRespondAssistantMessage {
     pub output: Option<String>,
 }
 
-enum Languages {
-    Python,
-    Shell,
+
+#[derive(Debug, Serialize, Deserialize)]
+struct Argument {
+    pub name: String,
+    pub nickname: String,
+    pub help_text: String,
+    #[serde(rename = "type")]
+    pub argument_type: String,
 }
+
+fn cli() -> clap::Command {
+
+    let arguments = serde_json::json!(
+        [
+            {
+                "name": "system_message",
+                "nickname": "s",
+                "help_text": "prompt / custom instructions for the language model",
+                "type": "str",
+            },
+            {
+                "name": "local",
+                "nickname": "l",
+                "help_text": "experimentally run the language model locally (via LM Studio)",
+                "type": "bool",
+            },
+            {
+                "name": "auto_run",
+                "nickname": "y",
+                "help_text": "automatically run generated code",
+                "type": "bool",
+            },
+            {
+                "name": "debug_mode",
+                "nickname": "d",
+                "help_text": "run in debug mode",
+                "type": "bool",
+            },
+            {
+                "name": "disable_procedures",
+                "nickname": "dp",
+                "help_text": "disables procedures (RAG of some common OI use-cases). disable to shrink system message. auto-disabled for non-OpenAI models",
+                "type": "bool",
+            },
+            {
+                "name": "model",
+                "nickname": "m",
+                "help_text": "language model to use",
+                "type": "str",
+            },
+            {
+                "name": "temperature",
+                "nickname": "t",
+                "help_text": "optional temperature setting for the language model",
+                "type": "float",
+            },
+            {
+                "name": "context_window",
+                "nickname": "c",
+                "help_text": "optional context window size for the language model",
+                "type": "int",
+            },
+            {
+                "name": "max_tokens",
+                "nickname": "x",
+                "help_text": "optional maximum number of tokens for the language model",
+                "type": "int",
+            },
+            {
+                "name": "max_output",
+                "nickname": "xo",
+                "help_text": "optional maximum number of characters for code outputs",
+                "type": "int",
+            },
+            {
+                "name": "max_budget",
+                "nickname": "b",
+                "help_text": "optionally set the max budget (in USD) for your llm calls",
+                "type": "float",
+            },
+            {
+                "name": "api_base",
+                "nickname": "ab",
+                "help_text": "optionally set the API base URL for your llm calls (this will override environment variables)",
+                "type": "str",
+            },
+            {
+                "name": "api_key",
+                "nickname": "ak",
+                "help_text": "optionally set the API key for your llm calls (this will override environment variables)",
+                "type": "str",
+            },
+            {
+                "name": "safe_mode",
+                "nickname": "safe",
+                "help_text": "optionally enable safety mechanisms like code scanning; valid options are off, ask, and auto",
+                "type": "str",
+                "choices": ["off", "ask", "auto"],
+                "default": "off",
+            },
+            {
+                "name": "config_file",
+                "nickname": "cf",
+                "help_text": "optionally set a custom config file to use",
+                "type": "str",
+            },
+            {
+                "name": "vision",
+                "nickname": "v",
+                "help_text": "experimentally use vision for supported languages (HTML)",
+                "type": "bool",
+            },
+        ]
+    );
+
+    let mut clap = clap::Command::new("Open Interpreter")
+        .about("A Open Code Interpreter CLI")
+        .subcommand_required(true)
+        .arg_required_else_help(true)
+        .allow_external_subcommands(true);
+    
+    {
+        // Deserialize the JSON array into a Vec<Argument>
+        let arguments: Vec<Argument> = serde_json::from_value(arguments).expect("Failed to deserialize JSON");
+
+        for arg in arguments {
+            let static_str: &'static str = Box::leak(arg.name.into_boxed_str());
+            // let xo: char = "ox".as_bytes();
+            clap = clap.arg(
+                Arg::new(static_str)
+                    // .short(arg.nickname.chars().next())
+                    .long(static_str)
+                    .help(arg.help_text)
+            )
+        }
+    }
+
+    clap
+}
+
+fn push_args() -> Vec<clap::Arg> {
+    vec![clap::arg!(-m --message <MESSAGE>)]
+}
+
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
+
+    tracing_subscriber::fmt()
+        // enable everything
+        .with_max_level(tracing::Level::INFO)
+        // .with_timer(tracing_subscriber::fmt::time::LocalTime::rfc_3339())
+        // sets this to be the default, global collector for this application.
+        .init();
+
+    // let matches = cli().get_matches();
+
+
+    let mut skin = MadSkin::default();
+
+    println!("\n {}\n", skin.inline("** Code Interpreter!** will require approval before running code."));
+    println!("{}\n", skin.inline("  Use `interpreter -y ` to bypass this."));
+    println!("{}\n", skin.inline("  Press `CTRL-C ` to exit."));
+
+
+    let mut rl = DefaultEditor::new()?;
+
+    #[cfg(feature = "with-file-history")]
+    if rl.load_history("history.txt").is_err() {
+        println!("No previous history.");
+    }
+    loop {
+        let readline = rl.readline(">> ");
+        match readline {
+            Ok(line) => {
+                let _ = rl.add_history_entry(line.as_str());
+                println!("Message: {}", line);
+                // "can you summarize the GitHub repository? https://github.com/KillianLucas/open-interpreter/"
+                let _ = interpreter(line).await?;
+
+            },
+            Err(ReadlineError::Interrupted) => {
+                println!("CTRL-C");
+                break
+            },
+            Err(ReadlineError::Eof) => {
+                println!("CTRL-D");
+                
+                // break
+            },
+            Err(err) => {
+                println!("Error: {:?}", err);
+                break
+            }
+        }
+    }
+    #[cfg(feature = "with-file-history")]
+    rl.save_history("history.txt");
+
+    // let destination: String = args.get_one::<String>("dest").unwrap().parse()?;
+
+    // Continued program logic goes here...
+
     // let interpreter = Interpreter::default();
     // println!("{:?}", interpreter);
+    
+    Ok(())
+}
 
+async fn interpreter(message: String) -> Result<(), Box<dyn Error>> {
     let client = Client::new();
 
-    let instructions = String::from(
+    let mut instructions = String::from(
         "You are Open Interpreter, a world-class programmer that can complete any goal by executing code.\n\
         First, write a plan. **Always recap the plan between each code block** (you have extreme short-term memory loss, so you need to recap the plan between each message block to retain it).\n\
         When you execute code, it will be executed **on the user\'s machine**. The user has given you **full and complete permission** to execute any code necessary to complete the task.\n\
@@ -84,7 +297,6 @@ async fn main() -> Result<(), Box<dyn Error>> {
         1. Create and run a minimal reproducible example.\n\
         2. Use dir() to verify correct imports. There may be a better object to import from the module.\n\
         3. Print docstrings of functions/classes using print(func.__doc__).\n\n\
-        4. Print the functions results.
         Only then are you permitted to use an alternative method.\n\
         ---\n\
         To make a simple app, use HTML/Bulma CSS/JS.\n\
@@ -97,6 +309,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
         In your plan, include steps and, for relevant deprecation notices, **EXACT CODE SNIPPETS** -- these notices will VANISH once you execute your first line of code, so WRITE THEM DOWN NOW if you need them."
     );
 
+    // Add OpenAI's recommended function message
+    instructions += "\n\nOnly use the function you have been provided with.";
+
     // Create a vector to store the messages
     let mut message_vec: Vec<ChatCompletionRequestMessage> = Vec::new();
 
@@ -106,24 +321,25 @@ async fn main() -> Result<(), Box<dyn Error>> {
         .build()?;
 
     let user_message = ChatCompletionRequestUserMessageArgs::default()
-        .content("can you summarize the GitHub repository? https://github.com/KillianLucas/open-interpreter/")
+        .content(message)
         .build()?;
 
     // Add messages to the vector
     message_vec.push(system_message.into());
     message_vec.push(user_message.into());
 
-    let _ = python_interpreter("import requests\n\n# Function to get the repository description\ndef get_repo_description(url):\n    response = requests.get(url)\n    description = response.json()['description']\n    return description\n\n# Get the repository description\nrepo_url = 'https://api.github.com/repos/KillianLucas/open-interpreter'\ndescription = get_repo_description(repo_url)\ndescription \n\n");
-
-    let mut flag = 3;
-    while flag < 3 {
-        flag += 1;
+    // let _ = python_interpreter("import requests\n\n# Function to get the repository description\ndef get_repo_description(url):\n    response = requests.get(url)\n    description = response.json()['description']\n    return description\n\n# Get the repository description\nrepo_url = 'https://api.github.com/repos/KillianLucas/open-interpreter'\ndescription = get_repo_description(repo_url)\ndescription \n\n");
+    let mut flag = true;
+    let mut step = 0;
+    let max_steps = 4;
+    while flag && step < max_steps {
+        step += 1;
         // Print the vector for demonstration
-        println!(
-            "\nStep {:?} : \n {}",
-            flag,
-            serde_json::to_string(&message_vec).unwrap()
-        );
+        // println!(
+        //     "\nStep {:?} : \n {}",
+        //     step,
+        //     serde_json::to_string(&message_vec).unwrap()
+        // );
         let request = CreateChatCompletionRequestArgs::default()
             .max_tokens(512u16)
             .model("gpt-3.5-turbo-1106")
@@ -177,82 +393,93 @@ async fn main() -> Result<(), Box<dyn Error>> {
                             }
                         }
                         if let Some(finish_reason) = &chat_choice.finish_reason {
-                            if matches!(finish_reason, FinishReason::FunctionCall) {
+                            // println!("\n ==========finish_reason=======\n{:?}", finish_reason);
+                            match finish_reason {
+                                FinishReason::Stop=>{
+                                    // finished current conversation.
+                                    flag = false;
+                                    info!("【Result】{}", fn_contents);
+                                    break;
+                                }
+                                FinishReason::Length => todo!(),
+                                FinishReason::ToolCalls => todo!(),
+                                FinishReason::ContentFilter => todo!(),
+                                FinishReason::FunctionCall =>  {
+                                    // for display purposes
+                                    // let result: ChatCompletionRespondAssistantMessage = ChatCompletionRespondAssistantMessageArgs::default()
+                                    //     .language(&fn_name)
+                                    //     .code(&fn_args)
+                                    //     .build()?
+                                    //     .into();
+                                    // println!("result is\n {:?}", function_call_res.clone());
+                                    // Construct message object from openai function_call message for chat completion
+                                    let assistant_msg =
+                                        ChatCompletionRequestAssistantMessageArgs::default()
+                                            .content(fn_contents.clone())
+                                            .function_call(FunctionCall {
+                                                name: fn_name.clone(),
+                                                arguments: fn_args.clone(),
+                                            })
+                                            .build()?;
+                                    message_vec.push(assistant_msg.into());
 
-                                // for display purposes
-                                // let result: ChatCompletionRespondAssistantMessage = ChatCompletionRespondAssistantMessageArgs::default()
-                                //     .language(&fn_name)
-                                //     .code(&fn_args)
-                                //     .build()?
-                                //     .into();
-                                // println!("result is\n {:?}", function_call_res.clone());
+                                    // Parse function call arguments and get language
+                                    let function_call_res: Value = serde_json::from_str(&fn_args)?;
 
-                                // Construct message object from openai function_call message for chat completion
-                                let assistant_msg =
-                                    ChatCompletionRequestAssistantMessageArgs::default()
-                                        .content(fn_contents.clone())
-                                        .function_call(FunctionCall {
-                                            name: fn_name.clone(),
-                                            arguments: fn_args.clone(),
-                                        })
-                                        .build()?;
-                                message_vec.push(assistant_msg.into());
+                                    if let Some(language) = function_call_res.get("language") {
+                                        if let Some(language) = language.as_str() {
+                                            // execute the code and get response.
+                                            let output;
+                                            match language {
+                                                "python" => {
+                                                    info!("Found Python code!");
 
-                                // Parse function call arguments and get language
-                                let function_call_res: Value = serde_json::from_str(&fn_args)?;
+                                                    if let Some(code) = function_call_res.get("code") {
+                                                        if let Some(code) = code.as_str() {
+                                                            // Execute the function call and get the answer message
+                                                            output = python_interpreter(code);
 
-                                if let Some(language) = function_call_res.get("language") {
-                                    if let Some(language) = language.as_str() {
-                                        // execute the code and get response.
-                                        let output;
-                                        match language {
-                                            "python" => {
-                                                println!("Found Python code!");
+                                                            match output {
+                                                                Ok(output_msg) => {
+                                                                    debug!(
+                                                                        "stdout String: {}",
+                                                                        output_msg
+                                                                    );
+                                                                    let function_msg: ChatCompletionRequestFunctionMessage = ChatCompletionRequestFunctionMessageArgs::default()
+                                                                        .name("execute")
+                                                                        .content(output_msg)
+                                                                        .build()?;
+                                                                    // Add function message to history
+                                                                    message_vec
+                                                                        .push(function_msg.into());
+                                                                }
+                                                                Err(err) => {
 
-                                                if let Some(code) = function_call_res.get("code") {
-                                                    if let Some(code) = code.as_str() {
-                                                        // Execute the function call and get the answer message
-                                                        output = python_interpreter(code);
-
-                                                        match output {
-                                                            Ok(output_msg) => {
-                                                                println!(
-                                                                    "stdout String: {}",
-                                                                    output_msg
-                                                                );
-                                                                let function_msg: ChatCompletionRequestFunctionMessage = ChatCompletionRequestFunctionMessageArgs::default()
-                                                                    .name("execute")
-                                                                    .content(output_msg)
-                                                                    .build()?;
-                                                                // Add function message to history
-                                                                message_vec
-                                                                    .push(function_msg.into());
-                                                            }
-                                                            Err(err) => {
-
-                                                                // 发送结果到llm 寻求下一步的解决方案
+                                                                    // 发送结果到llm 寻求下一步的解决方案
+                                                                }
                                                             }
                                                         }
                                                     }
                                                 }
+                                                "shell" => {
+                                                    warn!("Found a script for shell!")
+                                                }
+                                                _ => warn!("No match found"),
                                             }
-                                            "shell" => {
-                                                println!("Found a script for shell!")
-                                            }
-                                            _ => println!("No match found"),
-                                        }
 
-                                        println!(
-                                            "Execute the function call and get the answer message"
-                                        );
+                                            info!(
+                                                "Execute the function call and get the answer message"
+                                            );
+                                        }
                                     }
+                                    // call_fn(&client, &fn_name, &fn_args).await?;
                                 }
-                                // call_fn(&client, &fn_name, &fn_args).await?;
                             }
                         } else if let Some(content) = &chat_choice.delta.content {
                             // 直接返回消息
-                            write!(lock, "{}", content).unwrap();
+                            // write!(lock, "{}", content).unwrap();
                             fn_contents.push_str(content);
+                            // flag = 100;
                         }
                     }
                 }
@@ -262,7 +489,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
             }
             stdout().flush()?;
         }
-        let ten_millis = time::Duration::from_millis(100);
+        let ten_millis = time::Duration::from_millis(1000);
         thread::sleep(ten_millis);
     }
 
@@ -374,4 +601,5 @@ fn python_interpreter(code: &str) -> Result<String, Box<dyn Error>> {
     // println!("output_str: \n{:?}", output_str);
 
     Ok(output_str)
+
 }
