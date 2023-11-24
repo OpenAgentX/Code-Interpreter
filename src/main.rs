@@ -6,9 +6,8 @@ use clap::{Arg, Subcommand};
 use rustyline::error::ReadlineError;
 use rustyline::DefaultEditor;
 
-use termimad::MadSkin;
-use tracing::{info, debug, warn};
-// use tracing_subscriber::fmt::time;
+use termimad::{mad_print_inline, MadSkin};
+use tracing::{debug, info, warn};
 
 use core::time;
 use std::collections::{HashMap, HashSet};
@@ -16,8 +15,9 @@ use std::error::Error;
 use std::fs::File;
 use std::io::{stdout, Write};
 use std::process::{Command, Output, Stdio};
-use std::thread::{sleep, self};
+use std::thread::{self, sleep};
 
+use async_openai::config::OpenAIConfig;
 use async_openai::error::OpenAIError;
 use async_openai::types::{
     ChatCompletionFunctionsArgs, ChatCompletionRequestAssistantMessageArgs,
@@ -27,7 +27,6 @@ use async_openai::types::{
     CreateChatCompletionRequestArgs, FinishReason, FunctionCall, Role,
 };
 use async_openai::Client;
-use async_openai::config::OpenAIConfig;
 
 use derive_builder::Builder;
 use futures::StreamExt;
@@ -35,10 +34,11 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 use syntect::easy::HighlightLines;
+use syntect::highlighting::{Color, FontStyle, Style, ThemeSet};
 use syntect::parsing::SyntaxSet;
-use syntect::highlighting::{ThemeSet, Style, Color, FontStyle};
 use syntect::util::{as_24_bit_terminal_escaped, LinesWithEndings};
 
+// use code_interpreter::init_tracing::init_tracing;
 
 #[derive(Debug, Serialize, Deserialize, Default, Clone, Builder, PartialEq)]
 #[builder(name = "ChatCompletionRespondAssistantMessageArgs")]
@@ -61,7 +61,6 @@ pub struct ChatCompletionRespondAssistantMessage {
     pub output: Option<String>,
 }
 
-
 #[derive(Debug, Serialize, Deserialize)]
 struct Argument {
     pub name: String,
@@ -72,7 +71,6 @@ struct Argument {
 }
 
 fn cli() -> clap::Command {
-
     let arguments = serde_json::json!(
         [
             {
@@ -181,10 +179,11 @@ fn cli() -> clap::Command {
         .subcommand_required(true)
         .arg_required_else_help(true)
         .allow_external_subcommands(true);
-    
+
     {
         // Deserialize the JSON array into a Vec<Argument>
-        let arguments: Vec<Argument> = serde_json::from_value(arguments).expect("Failed to deserialize JSON");
+        let arguments: Vec<Argument> =
+            serde_json::from_value(arguments).expect("Failed to deserialize JSON");
 
         for arg in arguments {
             let static_str: &'static str = Box::leak(arg.name.into_boxed_str());
@@ -193,7 +192,7 @@ fn cli() -> clap::Command {
                 Arg::new(static_str)
                     // .short(arg.nickname.chars().next())
                     .long(static_str)
-                    .help(arg.help_text)
+                    .help(arg.help_text),
             )
         }
     }
@@ -205,10 +204,9 @@ fn push_args() -> Vec<clap::Arg> {
     vec![clap::arg!(-m --message <MESSAGE>)]
 }
 
-
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
-
+    // let guard = Arc::new(Mutex::new(Some(init_tracing())));
     tracing_subscriber::fmt()
         // enable everything
         .with_max_level(tracing::Level::INFO)
@@ -218,13 +216,17 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     // let matches = cli().get_matches();
 
-
     let mut skin = MadSkin::default();
 
-    println!("\n {}\n", skin.inline("** Code Interpreter!** will require approval before running code."));
-    println!("{}\n", skin.inline("  Use `interpreter -y ` to bypass this."));
+    println!(
+        "\n {}\n",
+        skin.inline("** Code Interpreter!** will require approval before running code.")
+    );
+    println!(
+        "{}\n",
+        skin.inline("  Use `interpreter -y ` to bypass this.")
+    );
     println!("{}\n", skin.inline("  Press `CTRL-C ` to exit."));
-
 
     let mut rl = DefaultEditor::new()?;
 
@@ -237,23 +239,30 @@ async fn main() -> Result<(), Box<dyn Error>> {
         match readline {
             Ok(line) => {
                 let _ = rl.add_history_entry(line.as_str());
-                println!("Message: {}", line);
+                // println!("Message: {}", line);
                 // "can you summarize the GitHub repository? https://github.com/KillianLucas/open-interpreter/"
-                let _ = interpreter(line).await?;
+                let res = interpreter(line).await?;
 
-            },
+                mad_print_inline!(
+                    &skin,
+                    "\n**$0 ** *$1*", // the markdown template, interpreted once
+                    "Answer:",        // fills $0
+                    res,              // fills $1. Note that the stars don't mess the markdown
+                );
+                println!("\n");
+            }
             Err(ReadlineError::Interrupted) => {
                 println!("CTRL-C");
-                break
-            },
+                break;
+            }
             Err(ReadlineError::Eof) => {
                 println!("CTRL-D");
-                
+
                 // break
-            },
+            }
             Err(err) => {
                 println!("Error: {:?}", err);
-                break
+                break;
             }
         }
     }
@@ -266,11 +275,11 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     // let interpreter = Interpreter::default();
     // println!("{:?}", interpreter);
-    
+
     Ok(())
 }
 
-async fn interpreter(message: String) -> Result<(), Box<dyn Error>> {
+async fn interpreter(message: String) -> Result<String, Box<dyn Error>> {
     let client = Client::new();
 
     let mut instructions = String::from(
@@ -332,6 +341,7 @@ async fn interpreter(message: String) -> Result<(), Box<dyn Error>> {
     let mut flag = true;
     let mut step = 0;
     let max_steps = 4;
+    let mut final_contents = String::new();
     while flag && step < max_steps {
         step += 1;
         // Print the vector for demonstration
@@ -395,16 +405,17 @@ async fn interpreter(message: String) -> Result<(), Box<dyn Error>> {
                         if let Some(finish_reason) = &chat_choice.finish_reason {
                             // println!("\n ==========finish_reason=======\n{:?}", finish_reason);
                             match finish_reason {
-                                FinishReason::Stop=>{
+                                FinishReason::Stop => {
                                     // finished current conversation.
                                     flag = false;
-                                    info!("【Result】{}", fn_contents);
+                                    final_contents = fn_contents.clone();
                                     break;
+                                    // return Ok(fn_contents);
                                 }
                                 FinishReason::Length => todo!(),
                                 FinishReason::ToolCalls => todo!(),
                                 FinishReason::ContentFilter => todo!(),
-                                FinishReason::FunctionCall =>  {
+                                FinishReason::FunctionCall => {
                                     // for display purposes
                                     // let result: ChatCompletionRespondAssistantMessage = ChatCompletionRespondAssistantMessageArgs::default()
                                     //     .language(&fn_name)
@@ -432,9 +443,11 @@ async fn interpreter(message: String) -> Result<(), Box<dyn Error>> {
                                             let output;
                                             match language {
                                                 "python" => {
-                                                    info!("Found Python code!");
+                                                    debug!("Found Python code!");
 
-                                                    if let Some(code) = function_call_res.get("code") {
+                                                    if let Some(code) =
+                                                        function_call_res.get("code")
+                                                    {
                                                         if let Some(code) = code.as_str() {
                                                             // Execute the function call and get the answer message
                                                             output = python_interpreter(code);
@@ -467,7 +480,7 @@ async fn interpreter(message: String) -> Result<(), Box<dyn Error>> {
                                                 _ => warn!("No match found"),
                                             }
 
-                                            info!(
+                                            debug!(
                                                 "Execute the function call and get the answer message"
                                             );
                                         }
@@ -493,13 +506,13 @@ async fn interpreter(message: String) -> Result<(), Box<dyn Error>> {
         thread::sleep(ten_millis);
     }
 
-    Ok(())
+    Ok(final_contents)
 }
 
 fn python_interpreter(code: &str) -> Result<String, Box<dyn Error>> {
-
     // For Python code highlighting.
     // Load these once at the start of your program
+    println!("\n =================================================");
     let ps = SyntaxSet::load_defaults_newlines();
     let ts = ThemeSet::load_defaults();
     let syntax = ps.find_syntax_by_extension("py").unwrap();
@@ -522,7 +535,7 @@ fn python_interpreter(code: &str) -> Result<String, Box<dyn Error>> {
     // print!("{}", s);
     // Python code highlighting end.
 
-    println!("=================================================");
+    println!("\n\n =================================================");
     let mut child;
     if code.starts_with("!") {
         // println!("==================== pip ====================");
@@ -551,7 +564,7 @@ fn python_interpreter(code: &str) -> Result<String, Box<dyn Error>> {
         //     .as_mut()
         //     .ok_or("Child process stdin has not been captured!")?
         //     .write(code)?;
-        
+
         // child.stdin
         //     .as_mut()
         //     .ok_or("Child process stdin has not been captured!")?
@@ -565,7 +578,6 @@ fn python_interpreter(code: &str) -> Result<String, Box<dyn Error>> {
                 eprintln!("Error flushing process stdin: {}", err);
             }
         }
-        
 
         // println!("==================== python ====================");
         // let filename = "test.py";
@@ -601,5 +613,4 @@ fn python_interpreter(code: &str) -> Result<String, Box<dyn Error>> {
     // println!("output_str: \n{:?}", output_str);
 
     Ok(output_str)
-
 }

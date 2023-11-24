@@ -26,13 +26,18 @@ rustyline = "12.0.0"
 termimad = "0.26"
 
 tracing = "0.1"
-# tracing-appender = "0.2"
-tracing-subscriber = { version = "0.3", features = ["local-time"] }
+tracing-appender = "0.2"
+tracing-subscriber = { version = "0.3", features = ["local-time", "env-filter", "fmt"] }
 
 # pyo3 = { version = "0.20.0", features = ["extension-module"] }
 
 syntect = { version = "5.1.0", default-features = false, features = ["default-fancy"]}
 # rustpython = "0.3.0"
+
+[dependencies.pyo3]
+version = "0.20.0"
+features = ["auto-initialize"]
+
 
 [profile.release]
 # https://github.com/johnthagen/min-sized-rust
