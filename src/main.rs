@@ -39,7 +39,7 @@ use syntect::parsing::SyntaxSet;
 use syntect::util::{as_24_bit_terminal_escaped, LinesWithEndings};
 
 // use code_interpreter::init_tracing::init_tracing;
-
+use code_interpreter::code_interpreters::languages::shell::run_shell_command;
 #[derive(Debug, Serialize, Deserialize, Default, Clone, Builder, PartialEq)]
 #[builder(name = "ChatCompletionRespondAssistantMessageArgs")]
 #[builder(pattern = "mutable")]
@@ -440,7 +440,7 @@ async fn interpreter(message: String) -> Result<String, Box<dyn Error>> {
                                     if let Some(language) = function_call_res.get("language") {
                                         if let Some(language) = language.as_str() {
                                             // execute the code and get response.
-                                            let output;
+                                            // let output;
                                             match language {
                                                 "python" => {
                                                     debug!("Found Python code!");
@@ -450,7 +450,7 @@ async fn interpreter(message: String) -> Result<String, Box<dyn Error>> {
                                                     {
                                                         if let Some(code) = code.as_str() {
                                                             // Execute the function call and get the answer message
-                                                            output = python_interpreter(code);
+                                                            let output = python_interpreter(code);
 
                                                             match output {
                                                                 Ok(output_msg) => {
@@ -475,7 +475,29 @@ async fn interpreter(message: String) -> Result<String, Box<dyn Error>> {
                                                     }
                                                 }
                                                 "shell" => {
-                                                    warn!("Found a script for shell!")
+                                                    debug!("Found a script for shell!");
+                                                    // let code = String::from(
+                                                    // "cd src \
+                                                    // &&ls");
+
+                                                    if let Some(code) = function_call_res.get("code")
+                                                    {
+                                                        if let Some(code) = code.as_str() {
+                                                            // Execute the function call and get the answer message
+                                                            let output_msg = run_shell_command(code).await?;
+                                                            debug!(
+                                                                "run shell command stdout String: {}",
+                                                                output_msg
+                                                            );
+                                                            let function_msg: ChatCompletionRequestFunctionMessage = ChatCompletionRequestFunctionMessageArgs::default()
+                                                                .name("execute")
+                                                                .content(output_msg)
+                                                                .build()?;
+                                                            // Add function message to history
+                                                            message_vec
+                                                                .push(function_msg.into());
+                                                        }
+                                                    }
                                                 }
                                                 _ => warn!("No match found"),
                                             }

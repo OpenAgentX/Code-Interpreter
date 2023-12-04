@@ -1,5 +1,8 @@
 use std::env;
+use std::io::Write;
 use std::process::{Command, Stdio};
+
+use anyhow::Result;
 
 // SubprocessCodeInterpreter is assumed to be implemented elsewhere
 pub trait SubprocessCodeInterpreter {
@@ -54,9 +57,9 @@ impl Shell {
 
 fn preprocess_shell(code: &str) -> String {
     // Your implementation for preprocessing goes here
-    let mut processed_code = add_active_line_prints(code);
-    processed_code.push_str("\necho \"##end_of_execution##\"");
-    processed_code
+    // let mut processed_code = add_active_line_prints(code);
+    // processed_code.push_str("\necho \"##end_of_execution##\"");
+    code.into()
 }
 
 fn add_active_line_prints(code: &str) -> String {
@@ -89,6 +92,40 @@ fn has_multiline_commands(script_text: &str) -> bool {
             regex::Regex::new(pattern).unwrap().is_match(line.trim_end())
         })
     })
+}
+
+pub async fn run_shell_command(shell_code: &str) -> Result<String> {
+
+    let config = Config {
+        // Initialize configuration parameters
+    };
+    let shell = Shell::new(config);
+    println!("\n\n =================================================");
+    let processed_code = shell.preprocess_code(shell_code);
+    println!("─❯: {}", &processed_code);
+    println!("\n\n =================================================");
+    let child = Command::new(&shell.start_cmd)
+        .arg("-c")
+        .arg(&processed_code)
+        .stdin(Stdio::piped())
+        .stderr(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()?;
+
+    let output = child.wait_with_output().expect("failed to wait on child");
+
+    let output_str;
+    if output.status.success() {
+        output_str = String::from_utf8(output.stdout)?;
+        // println!("{:#?}", output_str);
+    } else {
+        output_str = String::from_utf8(output.stderr)?;
+        // println!("{:#?}", output_str);
+    }
+
+    // println!("output_str: \n{:?}", output_str);
+
+    Ok(output_str)
 }
 
 // fn main() {
