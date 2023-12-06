@@ -3,6 +3,8 @@ use std::path::PathBuf;
 
 use clap::arg;
 use clap::{Arg, Subcommand};
+use code_interpreter::rag::get_relevant_procedures_string::get_relevant_procedures_string;
+use code_interpreter::utils::get_user_info_string::get_user_info_string;
 use rustyline::error::ReadlineError;
 use rustyline::DefaultEditor;
 
@@ -292,31 +294,14 @@ async fn interpreter(message: String) -> Result<String, Box<dyn Error>> {
         When a user refers to a filename, they\'re likely referring to an existing file in the directory you\'re currently executing code in.\n\
         Write messages to the user in Markdown.\n\
         In general, try to **make plans** with as few steps as possible. As for actually executing code to carry out that plan, for *stateful* languages (like python, javascript, shell, but NOT for html which starts from 0 every time) **it\'s critical not to try to do everything in one code block.** You should try something, print information about it, then continue from there in tiny, informed steps. You will never get it on the first try, and attempting it in one go will often lead to errors you cant see.\n\
-        You are capable of **any** task.\n\n\
-        [User Info]\n\
-        Name: shihua\n\
-        CWD: /Users/shihua/Code/open-interpreter\n\
-        SHELL: /bin/zsh\n\
-        OS: Darwin\n\
-        [Recommended Procedures]\n\
-        If you encounter a traceback, don\'t try to use an alternative method yet. Instead:\n\n\
-        **Write a message to the user explaining what happened and theorizing why. Do not try to run_code immediately after run_code has errored.**\n\n\
-        If a solution is apparent (and is not simply changing methods / using a new package) attempt it.\n\
-        If not, list these steps in a message to the user, then follow them one-by-one:\n\n\
-        1. Create and run a minimal reproducible example.\n\
-        2. Use dir() to verify correct imports. There may be a better object to import from the module.\n\
-        3. Print docstrings of functions/classes using print(func.__doc__).\n\n\
-        Only then are you permitted to use an alternative method.\n\
-        ---\n\
-        To make a simple app, use HTML/Bulma CSS/JS.\n\
-        First, plan. Think deeply about the functionality, what the JS will need to do, and how it will need to work with the HTML.\n\
-        Then, **all in one** `html` code block (DO NOT `run_code` more than once, and NEVER use placeholders like \"// Javascript code here\" -- you\'re going to write the HTML/JS in one `run_code` function call):\n\
-        Put Bulma CSS and anything else you need in <head>, write the <body> of the app (add lots of padding on the body with Bulma), write the JS into the <script> tag.\n\n\
-        You probably want to center the app in a box with a border and make sure the body fills up the whole height of the page!\n\n\
-        Write **LOTS of <!--comments--> throughout the HTML and // Javascript** to the user knows what\'s going on, and use whitespace/indentation properly.\n\n\
-        This will automatically open the HTML file / simple app on the user\'s machine.\n\
-        In your plan, include steps and, for relevant deprecation notices, **EXACT CODE SNIPPETS** -- these notices will VANISH once you execute your first line of code, so WRITE THEM DOWN NOW if you need them."
+        You are capable of **any** task."
     );
+
+    // Add dynamic components, like the user's OS, username, relevant procedures, etc
+    let user_info = get_user_info_string();
+    let procedures = get_relevant_procedures_string(&message).await?;
+
+    instructions = instructions + "\n\n" + &user_info + "\n\n" + &procedures;
 
     // Add OpenAI's recommended function message
     instructions += "\n\nOnly use the function you have been provided with.";

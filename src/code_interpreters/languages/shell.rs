@@ -128,30 +128,15 @@ pub async fn run_shell_command(shell_code: &str) -> Result<String> {
     Ok(output_str)
 }
 
-// fn main() {
-//     // Example usage
-//     let config = Config {
-//         // Initialize configuration parameters
-//     };
-//     let shell = Shell::new(config);
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-//     let code = "ls";
-//     let processed_code = shell.preprocess_code(code);
-
-//     // Your code execution logic goes here
-
-//     let result = Command::new(&shell.start_cmd)
-//         .stdin(Stdio::piped())
-//         .stdout(Stdio::piped())
-//         .stderr(Stdio::piped())
-//         // .arg(&shell.start_cmd)
-//         .arg("-c")
-//         .arg(&processed_code)
-//         .output()
-//         .expect("Failed to execute shell command");
-
-//     let output = String::from_utf8_lossy(&result.stdout);
-//     println!("Output:\n{}", output);
-
-//     // Further processing based on the interpreter's methods
-// }
+    #[tokio::test]
+    async fn test_shell_ls() {
+        // Example usage
+        let code = "ls";
+        let _ = run_shell_command(code).await;
+        // Further processing based on the interpreter's methods
+    }
+}
