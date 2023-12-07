@@ -1,10 +1,8 @@
-use std::ffi::OsString;
-use std::path::PathBuf;
-
+use anyhow::Result;
 use clap::arg;
 use clap::{Arg, Subcommand};
 use code_interpreter::rag::get_relevant_procedures_string::get_relevant_procedures_string;
-use code_interpreter::utils::get_user_info_string::get_user_info_string;
+
 use rustyline::error::ReadlineError;
 use rustyline::DefaultEditor;
 
@@ -12,21 +10,17 @@ use termimad::{mad_print_inline, MadSkin};
 use tracing::{debug, info, warn};
 
 use core::time;
-use std::collections::{HashMap, HashSet};
-use std::error::Error;
-use std::fs::File;
-use std::io::{stdout, Write};
-use std::process::{Command, Output, Stdio};
-use std::thread::{self, sleep};
 
-use async_openai::config::OpenAIConfig;
+use std::io::{stdout, Write};
+use std::process::{Command, Stdio};
+use std::thread::{self};
+
 use async_openai::error::OpenAIError;
 use async_openai::types::{
-    ChatCompletionFunctionsArgs, ChatCompletionRequestAssistantMessageArgs,
-    ChatCompletionRequestFunctionMessage, ChatCompletionRequestFunctionMessageArgs,
-    ChatCompletionRequestMessage, ChatCompletionRequestSystemMessage,
-    ChatCompletionRequestSystemMessageArgs, ChatCompletionRequestUserMessageArgs,
-    CreateChatCompletionRequestArgs, FinishReason, FunctionCall, Role,
+    ChatCompletionFunctionsArgs, ChatCompletionRequestAssistantMessageArgs, ChatCompletionRequestFunctionMessage,
+    ChatCompletionRequestFunctionMessageArgs, ChatCompletionRequestMessage, ChatCompletionRequestSystemMessage,
+    ChatCompletionRequestSystemMessageArgs, ChatCompletionRequestUserMessageArgs, CreateChatCompletionRequestArgs,
+    FinishReason, FunctionCall, Role,
 };
 use async_openai::Client;
 
@@ -42,6 +36,8 @@ use syntect::util::{as_24_bit_terminal_escaped, LinesWithEndings};
 
 // use code_interpreter::init_tracing::init_tracing;
 use code_interpreter::code_interpreters::languages::shell::run_shell_command;
+use code_interpreter::utils::{check_environments, get_user_info_string};
+
 #[derive(Debug, Serialize, Deserialize, Default, Clone, Builder, PartialEq)]
 #[builder(name = "ChatCompletionRespondAssistantMessageArgs")]
 #[builder(pattern = "mutable")]
@@ -184,8 +180,7 @@ fn cli() -> clap::Command {
 
     {
         // Deserialize the JSON array into a Vec<Argument>
-        let arguments: Vec<Argument> =
-            serde_json::from_value(arguments).expect("Failed to deserialize JSON");
+        let arguments: Vec<Argument> = serde_json::from_value(arguments).expect("Failed to deserialize JSON");
 
         for arg in arguments {
             let static_str: &'static str = Box::leak(arg.name.into_boxed_str());
@@ -207,7 +202,7 @@ fn push_args() -> Vec<clap::Arg> {
 }
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn Error>> {
+async fn main() -> Result<()> {
     // let guard = Arc::new(Mutex::new(Some(init_tracing())));
     tracing_subscriber::fmt()
         // enable everything
@@ -218,16 +213,14 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     // let matches = cli().get_matches();
 
+    if !check_environments() {
+        return Ok(());
+    }
+
     let mut skin = MadSkin::default();
 
-    println!(
-        "\n {}\n",
-        skin.inline("** Code Interpreter!** will require approval before running code.")
-    );
-    println!(
-        "{}\n",
-        skin.inline("  Use `interpreter -y ` to bypass this.")
-    );
+    println!("\n {}\n", skin.inline("** Code Interpreter!** will require approval before running code."));
+    println!("{}\n", skin.inline("  Use `interpreter -y ` to bypass this."));
     println!("{}\n", skin.inline("  Press `CTRL-C ` to exit."));
 
     let mut rl = DefaultEditor::new()?;
@@ -281,7 +274,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-async fn interpreter(message: String) -> Result<String, Box<dyn Error>> {
+async fn interpreter(message: String) -> Result<String> {
     let client = Client::new();
 
     let mut instructions = String::from(
@@ -310,13 +303,9 @@ async fn interpreter(message: String) -> Result<String, Box<dyn Error>> {
     let mut message_vec: Vec<ChatCompletionRequestMessage> = Vec::new();
 
     // Create instances of your message types
-    let system_message = ChatCompletionRequestSystemMessageArgs::default()
-        .content(&instructions)
-        .build()?;
+    let system_message = ChatCompletionRequestSystemMessageArgs::default().content(&instructions).build()?;
 
-    let user_message = ChatCompletionRequestUserMessageArgs::default()
-        .content(message)
-        .build()?;
+    let user_message = ChatCompletionRequestUserMessageArgs::default().content(message).build()?;
 
     // Add messages to the vector
     message_vec.push(system_message.into());
@@ -409,14 +398,10 @@ async fn interpreter(message: String) -> Result<String, Box<dyn Error>> {
                                     //     .into();
                                     // println!("result is\n {:?}", function_call_res.clone());
                                     // Construct message object from openai function_call message for chat completion
-                                    let assistant_msg =
-                                        ChatCompletionRequestAssistantMessageArgs::default()
-                                            .content(fn_contents.clone())
-                                            .function_call(FunctionCall {
-                                                name: fn_name.clone(),
-                                                arguments: fn_args.clone(),
-                                            })
-                                            .build()?;
+                                    let assistant_msg = ChatCompletionRequestAssistantMessageArgs::default()
+                                        .content(fn_contents.clone())
+                                        .function_call(FunctionCall { name: fn_name.clone(), arguments: fn_args.clone() })
+                                        .build()?;
                                     message_vec.push(assistant_msg.into());
 
                                     // Parse function call arguments and get language
@@ -430,26 +415,21 @@ async fn interpreter(message: String) -> Result<String, Box<dyn Error>> {
                                                 "python" => {
                                                     debug!("Found Python code!");
 
-                                                    if let Some(code) =
-                                                        function_call_res.get("code")
-                                                    {
+                                                    if let Some(code) = function_call_res.get("code") {
                                                         if let Some(code) = code.as_str() {
                                                             // Execute the function call and get the answer message
                                                             let output = python_interpreter(code);
 
                                                             match output {
                                                                 Ok(output_msg) => {
-                                                                    debug!(
-                                                                        "stdout String: {}",
-                                                                        output_msg
-                                                                    );
-                                                                    let function_msg: ChatCompletionRequestFunctionMessage = ChatCompletionRequestFunctionMessageArgs::default()
-                                                                        .name("execute")
-                                                                        .content(output_msg)
-                                                                        .build()?;
+                                                                    debug!("stdout String: {}", output_msg);
+                                                                    let function_msg: ChatCompletionRequestFunctionMessage =
+                                                                        ChatCompletionRequestFunctionMessageArgs::default()
+                                                                            .name("execute")
+                                                                            .content(output_msg)
+                                                                            .build()?;
                                                                     // Add function message to history
-                                                                    message_vec
-                                                                        .push(function_msg.into());
+                                                                    message_vec.push(function_msg.into());
                                                                 }
                                                                 Err(err) => {
 
@@ -465,31 +445,25 @@ async fn interpreter(message: String) -> Result<String, Box<dyn Error>> {
                                                     // "cd src \
                                                     // &&ls");
 
-                                                    if let Some(code) = function_call_res.get("code")
-                                                    {
+                                                    if let Some(code) = function_call_res.get("code") {
                                                         if let Some(code) = code.as_str() {
                                                             // Execute the function call and get the answer message
                                                             let output_msg = run_shell_command(code).await?;
-                                                            debug!(
-                                                                "run shell command stdout String: {}",
-                                                                output_msg
-                                                            );
-                                                            let function_msg: ChatCompletionRequestFunctionMessage = ChatCompletionRequestFunctionMessageArgs::default()
-                                                                .name("execute")
-                                                                .content(output_msg)
-                                                                .build()?;
+                                                            debug!("run shell command stdout String: {}", output_msg);
+                                                            let function_msg: ChatCompletionRequestFunctionMessage =
+                                                                ChatCompletionRequestFunctionMessageArgs::default()
+                                                                    .name("execute")
+                                                                    .content(output_msg)
+                                                                    .build()?;
                                                             // Add function message to history
-                                                            message_vec
-                                                                .push(function_msg.into());
+                                                            message_vec.push(function_msg.into());
                                                         }
                                                     }
                                                 }
                                                 _ => warn!("No match found"),
                                             }
 
-                                            debug!(
-                                                "Execute the function call and get the answer message"
-                                            );
+                                            debug!("Execute the function call and get the answer message");
                                         }
                                     }
                                     // call_fn(&client, &fn_name, &fn_args).await?;
@@ -516,7 +490,7 @@ async fn interpreter(message: String) -> Result<String, Box<dyn Error>> {
     Ok(final_contents)
 }
 
-fn python_interpreter(code: &str) -> Result<String, Box<dyn Error>> {
+fn python_interpreter(code: &str) -> Result<String> {
     // For Python code highlighting.
     // Load these once at the start of your program
     println!("\n =================================================");
@@ -550,12 +524,7 @@ fn python_interpreter(code: &str) -> Result<String, Box<dyn Error>> {
         let cmd_code = code.replace("!pip ", "");
         let cmd_code: Vec<_> = cmd_code.split(" ").collect();
         // println!("================{:?}", cmd_code);
-        child = Command::new("pip3")
-            .args(cmd_code)
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .unwrap();
+        child = Command::new("pip3").args(cmd_code).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().unwrap();
     } else {
         let cmd_args: Vec<_> = "-i -q -u ".split(" ").collect();
         child = Command::new("python3")
