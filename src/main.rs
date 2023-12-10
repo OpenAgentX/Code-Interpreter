@@ -290,22 +290,21 @@ async fn interpreter(message: String) -> Result<String> {
         You are capable of **any** task."
     );
 
+    // Create a vector to store the messages
+    let mut message_vec: Vec<ChatCompletionRequestMessage> = Vec::new();
+
+    let user_message = ChatCompletionRequestUserMessageArgs::default().content(message).build()?;
+
     // Add dynamic components, like the user's OS, username, relevant procedures, etc
     let user_info = get_user_info_string();
-    let procedures = get_relevant_procedures_string(&message).await?;
+    let procedures = get_relevant_procedures_string(&user_message).await?;
 
     instructions = instructions + "\n\n" + &user_info + "\n\n" + &procedures;
 
     // Add OpenAI's recommended function message
     instructions += "\n\nOnly use the function you have been provided with.";
-
-    // Create a vector to store the messages
-    let mut message_vec: Vec<ChatCompletionRequestMessage> = Vec::new();
-
     // Create instances of your message types
     let system_message = ChatCompletionRequestSystemMessageArgs::default().content(&instructions).build()?;
-
-    let user_message = ChatCompletionRequestUserMessageArgs::default().content(message).build()?;
 
     // Add messages to the vector
     message_vec.push(system_message.into());

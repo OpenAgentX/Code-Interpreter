@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use async_openai::types::ChatCompletionRequestUserMessage;
 use tracing::debug;
 use anyhow::{Ok, Result};
 use reqwest;
@@ -11,9 +12,9 @@ struct RelevantProcedures {
 
 /// - Open Procedures is an open-source database of tiny, up-to-date coding tutorials.
 /// - We can query it semantically and append relevant tutorials/procedures to our system message: 
-pub async fn get_relevant_procedures_string(message: &str) -> Result<String> {
+pub async fn get_relevant_procedures_string(message: &ChatCompletionRequestUserMessage) -> Result<String> {
     let mut map = HashMap::new();
-    map.insert("query", message);
+    map.insert("query", vec![message]);
 
     let client = reqwest::Client::new();
     let url = "https://open-procedures.replit.app/search/";
