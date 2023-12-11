@@ -35,7 +35,10 @@ use syntect::parsing::SyntaxSet;
 use syntect::util::{as_24_bit_terminal_escaped, LinesWithEndings};
 
 // use code_interpreter::init_tracing::init_tracing;
-use code_interpreter::code_interpreters::languages::shell::run_shell_command;
+use code_interpreter::code_interpreters::languages::{
+    shell::run_shell_command,
+    applescript::run_applescript_command
+};
 use code_interpreter::utils::{check_environments, get_user_info_string};
 
 #[derive(Debug, Serialize, Deserialize, Default, Clone, Builder, PartialEq)]
@@ -385,7 +388,9 @@ async fn interpreter(message: String) -> Result<String> {
                                     break;
                                     // return Ok(fn_contents);
                                 }
-                                FinishReason::Length => todo!(),
+                                FinishReason::Length => {
+                                    println!()
+                                },
                                 FinishReason::ToolCalls => todo!(),
                                 FinishReason::ContentFilter => todo!(),
                                 FinishReason::FunctionCall => {
@@ -459,7 +464,23 @@ async fn interpreter(message: String) -> Result<String> {
                                                         }
                                                     }
                                                 }
-                                                _ => warn!("No match found"),
+                                                "applescript" => {
+                                                    if let Some(code) = function_call_res.get("code") {
+                                                        debug!("function_call_res applescript code: {}", &code);
+                                                        if let Some(code) = code.as_str() {
+                                                            let output_msg = run_applescript_command(code).await?;
+                                                            debug!("run shell command stdout String: {}", output_msg);
+                                                            let function_msg: ChatCompletionRequestFunctionMessage =
+                                                                ChatCompletionRequestFunctionMessageArgs::default()
+                                                                    .name("execute")
+                                                                    .content(output_msg)
+                                                                    .build()?;
+                                                            // Add function message to history
+                                                            message_vec.push(function_msg.into());
+                                                        }
+                                                    }
+                                                }
+                                                _ => warn!("No match found {:?} language", language),
                                             }
 
                                             debug!("Execute the function call and get the answer message");
