@@ -1,5 +1,5 @@
 // mod config;
-// mod init_tracing;
+pub mod init_tracing;
 pub mod rag;
 pub mod utils;
 // pub mod cli;

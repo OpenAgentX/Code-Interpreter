@@ -40,6 +40,7 @@ use code_interpreter::code_interpreters::languages::{
     applescript::run_applescript_command
 };
 use code_interpreter::utils::{check_environments, get_user_info_string};
+use code_interpreter::init_tracing;
 
 #[derive(Debug, Serialize, Deserialize, Default, Clone, Builder, PartialEq)]
 #[builder(name = "ChatCompletionRespondAssistantMessageArgs")]
@@ -206,13 +207,9 @@ fn push_args() -> Vec<clap::Arg> {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    // let guard = Arc::new(Mutex::new(Some(init_tracing())));
-    tracing_subscriber::fmt()
-        // enable everything
-        .with_max_level(tracing::Level::INFO)
-        // .with_timer(tracing_subscriber::fmt::time::LocalTime::rfc_3339())
-        // sets this to be the default, global collector for this application.
-        .init();
+
+    let _guard = init_tracing::setup();
+    tracing::info!("Code Interpreter! will require approval before running code.");
 
     // let matches = cli().get_matches();
 
@@ -220,7 +217,7 @@ async fn main() -> Result<()> {
         return Ok(());
     }
 
-    let mut skin = MadSkin::default();
+    let skin = MadSkin::default();
 
     println!("\n {}\n", skin.inline("** Code Interpreter!** will require approval before running code."));
     println!("{}\n", skin.inline("  Use `interpreter -y ` to bypass this."));
@@ -313,10 +310,15 @@ async fn interpreter(message: String) -> Result<String> {
     message_vec.push(system_message.into());
     message_vec.push(user_message.into());
 
+    info!(
+        "{}",
+        serde_json::to_string(&message_vec).unwrap()
+    );
+
     // let _ = python_interpreter("import requests\n\n# Function to get the repository description\ndef get_repo_description(url):\n    response = requests.get(url)\n    description = response.json()['description']\n    return description\n\n# Get the repository description\nrepo_url = 'https://api.github.com/repos/KillianLucas/open-interpreter'\ndescription = get_repo_description(repo_url)\ndescription \n\n");
     let mut flag = true;
     let mut step = 0;
-    let max_steps = 4;
+    let max_steps = 0;
     let mut final_contents = String::new();
     while flag && step < max_steps {
         step += 1;
