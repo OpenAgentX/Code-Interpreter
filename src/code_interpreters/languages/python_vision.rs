@@ -291,6 +291,7 @@ pub async fn python_vision_interpreter(code: &str) -> Result<String, Box<dyn Err
                         truecolor: false,
                         use_kitty: true,
                         use_iterm: true,
+                        premultiplied_alpha: false,
                     };
                     
                     viuer::print(&dynamic_image, cfg)?;

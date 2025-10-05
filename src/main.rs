@@ -15,6 +15,7 @@ use std::io::{stdout, Write};
 use std::process::{Command, Stdio};
 use std::thread::{self};
 
+use async_openai::config::OpenAIConfig;
 use async_openai::error::OpenAIError;
 use async_openai::types::{
     ChatCompletionFunctionsArgs, ChatCompletionRequestAssistantMessageArgs, ChatCompletionRequestFunctionMessage,
@@ -275,7 +276,26 @@ async fn main() -> Result<()> {
 }
 
 async fn interpreter(message: String) -> Result<String> {
-    let client = Client::new();
+    // Get API key from environment variable, fallback to OPENAI_API_KEY
+    let api_key = std::env::var("OPENAI_API_KEY")
+        .or_else(|_| std::env::var("API_KEY"))
+        .expect("OPENAI_API_KEY or API_KEY environment variable must be set");
+
+    // Get base URL from environment variable if set
+    let base_url = std::env::var("OPENAI_BASE_URL")
+        .or_else(|_| std::env::var("BASE_URL"))
+        .ok();
+
+    // Create client with custom configuration
+    let config = if let Some(url) = base_url {
+        OpenAIConfig::new()
+            .with_api_key(api_key)
+            .with_api_base(url)
+    } else {
+        OpenAIConfig::new().with_api_key(api_key)
+    };
+
+    let client = Client::with_config(config);
 
     let mut instructions = String::from(
         "You are Open Interpreter, a world-class programmer that can complete any goal by executing code.\n\
@@ -304,7 +324,7 @@ async fn interpreter(message: String) -> Result<String> {
     // Add OpenAI's recommended function message
     instructions += "\n\nOnly use the function you have been provided with.";
     // Create instances of your message types
-    let system_message = ChatCompletionRequestSystemMessageArgs::default().content(&instructions).build()?;
+    let system_message = ChatCompletionRequestSystemMessageArgs::default().content(instructions.clone()).build()?;
 
     // Add messages to the vector
     message_vec.push(system_message.into());
@@ -316,6 +336,12 @@ async fn interpreter(message: String) -> Result<String> {
     );
 
     // let _ = python_interpreter("import requests\n\n# Function to get the repository description\ndef get_repo_description(url):\n    response = requests.get(url)\n    description = response.json()['description']\n    return description\n\n# Get the repository description\nrepo_url = 'https://api.github.com/repos/KillianLucas/open-interpreter'\ndescription = get_repo_description(repo_url)\ndescription \n\n");
+
+    // Get model name from environment variable, with default fallback
+    let model = std::env::var("OPENAI_MODEL")
+        .or_else(|_| std::env::var("MODEL"))
+        .unwrap_or_else(|_| "Qwen/Qwen3-Coder-480B-A35B-Instruct".to_string());
+
     let mut flag = true;
     let mut step = 0;
     let max_steps = 0;
@@ -330,7 +356,7 @@ async fn interpreter(message: String) -> Result<String> {
         // );
         let request = CreateChatCompletionRequestArgs::default()
             .max_tokens(512u16)
-            .model("gpt-3.5-turbo-1106")
+            .model(&model)
             .messages(message_vec.clone())
             .functions([ChatCompletionFunctionsArgs::default()
                 .name("execute")
